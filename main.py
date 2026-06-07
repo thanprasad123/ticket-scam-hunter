@@ -64,6 +64,41 @@ async def health() -> dict:
     return {"status": "ok", "service": "ticket-scam-hunter", "version": API_VERSION}
 
 
+@app.get("/mcp", tags=["mcp"])
+async def mcp_tools():
+    return {
+        "tools": [
+            {
+                "name": "scan_ticket_url",
+                "description": "Analyze a ticket website URL for FIFA World Cup 2026 scam signals",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The ticket website URL to analyze"
+                        }
+                    },
+                    "required": ["url"]
+                }
+            },
+            {
+                "name": "search_scams",
+                "description": "Search previously detected scam sites in Elasticsearch",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["SCAM", "SUSPICIOUS", "LEGITIMATE"]
+                        }
+                    }
+                }
+            }
+        ]
+    }
+
+
 @app.post(
     "/v1/scans",
     response_model=ScanResultResponse,
