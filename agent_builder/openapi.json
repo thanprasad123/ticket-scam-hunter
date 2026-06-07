@@ -1,0 +1,205 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Ticket Scam Hunter",
+    "description": "Analyze FIFA World Cup 2026 ticket URLs for scam signals and query Elasticsearch for prior scans. Use scanTicketUrl when the user provides a URL to check. Use searchScans to list known scams. Use getCachedScan to avoid re-analyzing a URL.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://YOUR_CLOUD_RUN_SERVICE_URL",
+      "description": "Deploy main.py to Cloud Run and replace this URL."
+    }
+  ],
+  "paths": {
+    "/v1/scans": {
+      "post": {
+        "operationId": "scanTicketUrl",
+        "summary": "Analyze a ticket URL for scam signals",
+        "description": "Fetches the page, runs Gemini risk analysis, optionally persists to Elasticsearch, and returns score (0-10), verdict, and reasons.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanUrlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scan completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResultResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream fetch failed"
+          },
+          "504": {
+            "description": "Scan timed out"
+          }
+        }
+      },
+      "get": {
+        "operationId": "searchScans",
+        "summary": "Search stored scam scan results",
+        "parameters": [
+          {
+            "name": "verdict",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["SCAM", "SUSPICIOUS", "LEGITIMATE"]
+            },
+            "description": "Filter by verdict"
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "description": "Full-text search across url, reasons, and red_flags"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results (max 10)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchScansResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/scans/cached": {
+      "get": {
+        "operationId": "getCachedScan",
+        "summary": "Return a previously stored scan for a URL",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 2048
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cached scan found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanResultResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No cached scan"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "summary": "Service health check",
+        "responses": {
+          "200": {
+            "description": "Service is healthy"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ScanUrlRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Ticket listing or sales page URL"
+          },
+          "persist": {
+            "type": "boolean",
+            "default": true,
+            "description": "Store result in Elasticsearch"
+          },
+          "force_refresh": {
+            "type": "boolean",
+            "default": false,
+            "description": "Skip cache and run fresh analysis"
+          }
+        }
+      },
+      "ScanResultResponse": {
+        "type": "object",
+        "required": ["url", "verdict", "score", "reasons", "analyzed_at"],
+        "properties": {
+          "url": { "type": "string" },
+          "verdict": {
+            "type": "string",
+            "enum": ["SCAM", "SUSPICIOUS", "LEGITIMATE"]
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "reasons": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          },
+          "red_flags": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "trust_signals": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "analyzed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "document_id": { "type": "string" },
+          "cached": { "type": "boolean" }
+        }
+      },
+      "SearchScansResponse": {
+        "type": "object",
+        "required": ["total", "results"],
+        "properties": {
+          "total": { "type": "integer" },
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ScanResultResponse" }
+          }
+        }
+      }
+    }
+  }
+}
