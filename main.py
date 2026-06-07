@@ -64,7 +64,7 @@ async def health() -> dict:
     return {"status": "ok", "service": "ticket-scam-hunter", "version": API_VERSION}
 
 
-@app.get("/mcp", tags=["mcp"])
+@app.api_route("/mcp", methods=["GET", "POST"], tags=["mcp"])
 async def mcp_tools():
     return {
         "tools": [
