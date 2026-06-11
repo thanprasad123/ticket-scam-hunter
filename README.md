@@ -1,6 +1,6 @@
 # ProTick AI
 
-Ticket Scam Hunter is an AI-powered platform designed to identify potentially fraudulent ticket-selling websites, with a focus on FIFA World Cup 2026 ticket scams.
+It is an AI-powered platform designed to identify potentially fraudulent ticket-selling websites, with a focus on FIFA World Cup 2026 ticket scams.
 
 The project combines Google Vertex AI Gemini, FastAPI, Elasticsearch, and Model Context Protocol (MCP) to analyze ticket websites, classify risk levels, and provide searchable scam intelligence.
 
@@ -8,7 +8,7 @@ The project combines Google Vertex AI Gemini, FastAPI, Elasticsearch, and Model 
 
 Major sporting events attract large numbers of fraudulent ticket websites and unauthorized resellers. Users often struggle to determine whether a ticket platform is trustworthy, resulting in financial loss and exposure to scams.
 
-Ticket Scam Hunter helps users evaluate ticket websites by automatically analyzing website content and identifying potential scam indicators.
+It helps users evaluate ticket websites by automatically analyzing website content and identifying potential scam indicators.
 
 ## Solution
 
