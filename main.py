@@ -6,14 +6,16 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastmcp.utilities.lifespan import combine_lifespans
 from pydantic import ValidationError
-from requests.exceptions import RequestException
 
+from mcp_server import mcp_app
 from schemas import (
     ErrorResponse,
+    ScanPipelineError,
     ScanResultResponse,
     ScanUrlRequest,
     SearchScansRequest,
@@ -43,7 +45,7 @@ app = FastAPI(
         "Google Cloud Vertex AI Agent Builder and Elastic partner track."
     ),
     version=API_VERSION,
-    lifespan=lifespan,
+    lifespan=combine_lifespans(lifespan, mcp_app.lifespan),
     responses={
         422: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
@@ -58,45 +60,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/mcp", mcp_app)
+
 
 @app.get("/health", tags=["system"])
 async def health() -> dict:
     return {"status": "ok", "service": "ticket-scam-hunter", "version": API_VERSION}
 
 
-@app.api_route("/mcp", methods=["GET", "POST"], tags=["mcp"])
-async def mcp_tools():
-    return {
-        "tools": [
-            {
-                "name": "scan_ticket_url",
-                "description": "Analyze a ticket website URL for FIFA World Cup 2026 scam signals",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "The ticket website URL to analyze"
-                        }
-                    },
-                    "required": ["url"]
-                }
-            },
-            {
-                "name": "search_scams",
-                "description": "Search previously detected scam sites in Elasticsearch",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "verdict": {
-                            "type": "string",
-                            "enum": ["SCAM", "SUSPICIOUS", "LEGITIMATE"]
-                        }
-                    }
-                }
-            }
-        ]
-    }
+def _pipeline_http_exception(exc: ScanPipelineError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail=str(exc),
+        headers={"X-Error-Code": exc.error_code},
+    )
 
 
 @app.post(
@@ -105,24 +82,38 @@ async def mcp_tools():
     tags=["scans"],
     operation_id="scanTicketUrl",
     summary="Analyze a ticket URL for scam signals",
+    responses={
+        502: {"model": ErrorResponse, "description": "URL fetch or analysis failed"},
+        504: {"model": ErrorResponse, "description": "Scan timed out"},
+        500: {"model": ErrorResponse, "description": "Unexpected pipeline error"},
+    },
 )
 async def create_scan(body: ScanUrlRequest) -> ScanResultResponse:
+    url = str(body.url)
     try:
         return await asyncio.wait_for(scan_ticket_url(body), timeout=120.0)
     except asyncio.TimeoutError as exc:
+        logger.error("Scan timed out for %s", url)
         raise HTTPException(
             status_code=504,
             detail="Scan timed out while fetching or analyzing the URL.",
+            headers={"X-Error-Code": "scan_timeout"},
         ) from exc
-    except RequestException as exc:
+    except ScanPipelineError as exc:
+        logger.error(
+            "Scan pipeline failed for %s [%s]: %s",
+            url,
+            exc.error_code,
+            exc,
+        )
+        raise _pipeline_http_exception(exc) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error during scan for %s", url)
         raise HTTPException(
-            status_code=502,
-            detail=f"Failed to fetch URL after retries: {exc}",
+            status_code=500,
+            detail="An unexpected error occurred during the scan.",
+            headers={"X-Error-Code": "internal_error"},
         ) from exc
-    except EnvironmentError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except (ValidationError, ValueError, KeyError) as exc:
-        raise HTTPException(status_code=500, detail=f"Invalid analysis response: {exc}") from exc
 
 
 @app.get(
@@ -195,11 +186,31 @@ async def cached_scan(
 
 
 @app.exception_handler(HTTPException)
-async def http_exception_handler(_request, exc: HTTPException):
+async def http_exception_handler(_request: Request, exc: HTTPException):
+    error_code = None
+    if exc.headers:
+        error_code = exc.headers.get("X-Error-Code")
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
             detail=str(exc.detail),
-            error_code=f"http_{exc.status_code}",
+            error_code=error_code or f"http_{exc.status_code}",
+        ).model_dump(),
+        headers={k: v for k, v in (exc.headers or {}).items() if k != "X-Error-Code"},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unhandled error on %s %s",
+        request.method,
+        request.url.path,
+    )
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            detail="Internal server error",
+            error_code="internal_error",
         ).model_dump(),
     )

@@ -133,3 +133,45 @@ class SearchScansResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     error_code: str | None = None
+
+
+class ScanPipelineError(Exception):
+    """Base exception for scan pipeline failures mapped to HTTP responses."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str,
+        status_code: int = 500,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.status_code = status_code
+
+
+class UrlFetchError(ScanPipelineError):
+    """Target URL could not be fetched after retries."""
+
+    def __init__(self, message: str, *, cause: Exception | None = None) -> None:
+        super().__init__(message, error_code="url_fetch_failed", status_code=502)
+        if cause is not None:
+            self.__cause__ = cause
+
+
+class AnalysisError(ScanPipelineError):
+    """Gemini analysis or response parsing failed."""
+
+    def __init__(self, message: str, *, cause: Exception | None = None) -> None:
+        super().__init__(message, error_code="analysis_failed", status_code=502)
+        if cause is not None:
+            self.__cause__ = cause
+
+
+class ScanResponseError(ScanPipelineError):
+    """Scan completed but the result could not be validated."""
+
+    def __init__(self, message: str, *, cause: Exception | None = None) -> None:
+        super().__init__(message, error_code="invalid_scan_response", status_code=500)
+        if cause is not None:
+            self.__cause__ = cause

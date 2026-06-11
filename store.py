@@ -62,13 +62,22 @@ def _doc_from_result(result: dict) -> dict:
 
 
 def store_result(result: dict, es: Elasticsearch | None = None) -> str | None:
+    url = result.get("url", "unknown")
     try:
         client = es or get_es_client()
         create_index_if_not_exists(client)
         response = client.index(index=INDEX, document=_doc_from_result(result))
+        logger.info("Stored scan result for %s (doc_id=%s)", url, response["_id"])
         return response["_id"]
+    except EnvironmentError as e:
+        logger.warning(
+            "Elasticsearch unavailable, skipping persist for %s: %s",
+            url,
+            e,
+        )
+        return None
     except Exception as e:
-        logger.warning("Elasticsearch store failed: %s", e)
+        logger.warning("Elasticsearch store failed for %s: %s", url, e)
         return None
 
 
@@ -119,9 +128,17 @@ def get_by_url(url: str, es: Elasticsearch | None = None) -> dict | None:
         hits = response["hits"]["hits"]
         if not hits:
             return None
+        logger.debug("Cache hit for %s", url)
         return hits[0]["_source"]
+    except EnvironmentError as e:
+        logger.warning(
+            "Elasticsearch unavailable, cache miss for %s: %s",
+            url,
+            e,
+        )
+        return None
     except Exception as e:
-        logger.warning("Elasticsearch lookup failed: %s", e)
+        logger.warning("Elasticsearch lookup failed for %s: %s", url, e)
         return None
 
 
