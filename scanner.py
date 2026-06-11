@@ -116,6 +116,7 @@ async def scan_ticket_url(request: ScanUrlRequest) -> ScanResultResponse:
             result["reasons"] + red_flags + result.get("trust_signals", [])
         )
     )
+    result["red_flags"] = red_flags
 
     try:
         response = ScanResultResponse(

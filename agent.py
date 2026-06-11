@@ -1,6 +1,14 @@
 import os
 from google.adk.agents import Agent
-from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, SseServerParams
+from google.adk.tools.mcp_tool.mcp_toolset import (
+    MCPToolset,
+    StreamableHTTPConnectionParams,
+)
+
+MCP_SERVER_URL = os.environ.get(
+    "MCP_SERVER_URL",
+    "https://ticket-scam-hunter.onrender.com/mcp",
+)
 
 root_agent = Agent(
     name="ticket_scam_hunter",
@@ -14,8 +22,8 @@ When a user asks about known scams, use the search_scams tool.
 Always explain your findings clearly and warn users about risks.""",
     tools=[
         MCPToolset(
-            connection_params=SseServerParams(
-                url="https://ticket-scam-hunter.onrender.com/mcp",
+            connection_params=StreamableHTTPConnectionParams(
+                url=MCP_SERVER_URL,
             )
         )
     ],

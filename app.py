@@ -1,3 +1,6 @@
+import html
+import os
+
 import streamlit as st
 import requests
 
@@ -17,7 +20,10 @@ footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-API_URL = "https://ticket-scam-hunter.onrender.com"
+API_URL = os.environ.get(
+    "TICKET_SCAM_HUNTER_API_URL",
+    "https://ticket-scam-hunter.onrender.com",
+).rstrip("/")
 
 st.markdown("""
 <div class="topbar">
@@ -42,7 +48,14 @@ if scan and url:
     with st.spinner("Analyzing with Gemini AI + Elasticsearch..."):
         try:
             r = requests.post(f"{API_URL}/v1/scans", json={"url": url}, timeout=120)
-            res = r.json()
+            try:
+                res = r.json()
+            except ValueError:
+                res = {}
+            if not r.ok:
+                detail = res.get("detail") or f"API request failed with {r.status_code}"
+                st.error(detail)
+                st.stop()
             verdict = res.get("verdict", "UNKNOWN")
             score = res.get("score", 0)
             reasons = res.get("reasons", [])
@@ -61,7 +74,8 @@ if scan and url:
                 cached = res.get("cached", False)
                 st.metric("Source", "Cached" if cached else "Fresh scan")
 
-            st.progress(float(score)/10)
+            score_value = max(0.0, min(10.0, float(score)))
+            st.progress(score_value / 10)
 
             if reasons:
                 st.markdown("**Analysis**")
@@ -71,14 +85,20 @@ if scan and url:
             if red_flags:
                 st.markdown("**Red Flags**")
                 for f in red_flags:
-                    st.markdown(f'<div class="flag-box">⚠️ {f}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="flag-box">⚠️ {html.escape(str(f))}</div>',
+                        unsafe_allow_html=True,
+                    )
 
             if trust_signals:
                 st.markdown("**Trust Signals**")
                 for t in trust_signals:
-                    st.markdown(f'<div class="trust-box">✅ {t}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="trust-box">✅ {html.escape(str(t))}</div>',
+                        unsafe_allow_html=True,
+                    )
 
-        except Exception as e:
+        except (requests.RequestException, TypeError, ValueError) as e:
             st.error(f"Error: {e}")
 
 elif scan and not url:
@@ -88,13 +108,15 @@ with st.sidebar:
     st.markdown("### 🕵️ Recent Scans")
     try:
         r = requests.get(f"{API_URL}/v1/scans", timeout=10)
+        r.raise_for_status()
         data = r.json()
         for item in data.get("results", [])[:5]:
             v = item.get("verdict","")
             icon = "🔴" if v=="SCAM" else "🟡" if v=="SUSPICIOUS" else "🟢"
-            url_short = item.get("url","")[:35] + "..."
-            st.markdown(f'<div class="recent-item">{icon} {url_short}<br><small>Score: {item.get("score")}/10</small></div>', unsafe_allow_html=True)
-    except:
+            url_short = html.escape(item.get("url","")[:35] + "...")
+            score = html.escape(str(item.get("score")))
+            st.markdown(f'<div class="recent-item">{icon} {url_short}<br><small>Score: {score}/10</small></div>', unsafe_allow_html=True)
+    except (requests.RequestException, ValueError):
         st.caption("No recent scans yet.")
 
     st.divider()

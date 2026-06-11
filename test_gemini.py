@@ -1,16 +1,26 @@
-
 from google import genai
-from google.genai import types
 
-client = genai.Client(
-    vertexai=True,
-    project="gen-lang-client-0799569470",
-    location="us-central1"
-)
+from analyze import MODEL, VERTEX_LOCATION, VERTEX_PROJECT
 
-response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents="Is this URL suspicious? https://cheapworldcuptickets2026.com — answer in one sentence."
-)
 
-print(response.text)
+def main() -> int:
+    client = genai.Client(
+        vertexai=True,
+        project=VERTEX_PROJECT,
+        location=VERTEX_LOCATION,
+    )
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=(
+            "Is this URL suspicious? https://cheapworldcuptickets2026.com "
+            "- answer in one sentence."
+        ),
+    )
+
+    print(response.text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

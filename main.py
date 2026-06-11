@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from requests.exceptions import RequestException
@@ -17,22 +20,40 @@ from schemas import (
     ErrorResponse,
     ScanResultResponse,
     ScanUrlRequest,
+    ScanPipelineError,
     SearchScansRequest,
     SearchScansResponse,
     Verdict,
 )
 from scanner import scan_ticket_url
+from mcp_server import mcp_app
 from store import get_by_url, search_scams
 
 logger = logging.getLogger(__name__)
 API_VERSION = "1.0.0"
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
+
+def _doc_to_scan_response(doc: dict) -> ScanResultResponse:
+    return ScanResultResponse(
+        url=doc["url"],
+        verdict=Verdict(doc["verdict"]),
+        score=float(doc["score"]),
+        reasons=doc.get("reasons", []),
+        red_flags=doc.get("red_flags", []),
+        trust_signals=doc.get("trust_signals", []),
+        analyzed_at=doc.get("analyzed_at") or datetime.now(timezone.utc),
+        cached=True,
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO)
     logger.info("Ticket Scam Hunter API starting (v%s)", API_VERSION)
-    yield
+    async with mcp_app.lifespan(app):
+        yield
     logger.info("Ticket Scam Hunter API shutting down")
 
 
@@ -51,19 +72,22 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 # Serve static UI
-import os
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+for route in mcp_app.routes:
+    app.router.routes.append(route)
 
 @app.get("/", include_in_schema=False)
 async def serve_ui():
-    if os.path.exists("static/index.html"):
-        return FileResponse("static/index.html")
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
     return {"message": "Ticket Scam Hunter API", "docs": "/docs"}
 
 
@@ -72,33 +96,6 @@ async def health() -> dict:
     return {"status": "ok", "service": "ticket-scam-hunter", "version": API_VERSION}
 
 
-@app.api_route("/mcp", methods=["GET", "POST"], tags=["mcp"])
-async def mcp_tools():
-    return {
-        "tools": [
-            {
-                "name": "scan_ticket_url",
-                "description": "Analyze a ticket website URL for FIFA World Cup 2026 scam signals",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "url": {"type": "string", "description": "The ticket website URL to analyze"}
-                    },
-                    "required": ["url"]
-                }
-            },
-            {
-                "name": "search_scams",
-                "description": "Search previously detected scam sites in Elasticsearch",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "verdict": {"type": "string", "enum": ["SCAM", "SUSPICIOUS", "LEGITIMATE"]}
-                    }
-                }
-            }
-        ]
-    }
 
 
 @app.post(
@@ -113,6 +110,8 @@ async def create_scan(body: ScanUrlRequest) -> ScanResultResponse:
         return await asyncio.wait_for(scan_ticket_url(body), timeout=120.0)
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Scan timed out.") from exc
+    except ScanPipelineError:
+        raise
     except RequestException as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {exc}") from exc
     except EnvironmentError as exc:
@@ -138,20 +137,14 @@ async def list_scans(
             search_scams,
             verdict=params.verdict.value if params.verdict else None,
             query=params.query,
+            raise_errors=True,
         )
-        results = [
-            ScanResultResponse(
-                url=doc["url"],
-                verdict=Verdict(doc["verdict"]),
-                score=float(doc["score"]),
-                reasons=doc.get("reasons", []),
-                red_flags=doc.get("red_flags", []),
-                trust_signals=doc.get("trust_signals", []),
-                analyzed_at=doc.get("analyzed_at"),
-                cached=True,
-            )
-            for doc in docs
-        ]
+        results = []
+        for doc in docs:
+            try:
+                results.append(_doc_to_scan_response(doc))
+            except (ValidationError, ValueError, KeyError) as exc:
+                logger.warning("Skipping invalid Elasticsearch scan document: %s", exc)
         return SearchScansResponse(total=len(results), results=results)
     except EnvironmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -169,7 +162,7 @@ async def cached_scan(
 ) -> ScanResultResponse:
     try:
         request = ScanUrlRequest(url=url, persist=False, force_refresh=False)
-        doc = await asyncio.to_thread(get_by_url, str(request.url))
+        doc = await asyncio.to_thread(get_by_url, str(request.url), raise_errors=True)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except EnvironmentError as exc:
@@ -178,15 +171,34 @@ async def cached_scan(
     if not doc:
         raise HTTPException(status_code=404, detail="No cached scan found for this URL.")
 
-    return ScanResultResponse(
-        url=doc["url"],
-        verdict=Verdict(doc["verdict"]),
-        score=float(doc["score"]),
-        reasons=doc.get("reasons", []),
-        red_flags=doc.get("red_flags", []),
-        trust_signals=doc.get("trust_signals", []),
-        analyzed_at=doc.get("analyzed_at"),
-        cached=True,
+    try:
+        return _doc_to_scan_response(doc)
+    except (ValidationError, ValueError, KeyError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invalid cached scan document: {exc}",
+        ) from exc
+
+
+@app.exception_handler(ScanPipelineError)
+async def scan_pipeline_exception_handler(_request: Request, exc: ScanPipelineError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            detail=str(exc),
+            error_code=exc.error_code,
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content=ErrorResponse(
+            detail=str(exc),
+            error_code="validation_error",
+        ).model_dump(),
     )
 
 

@@ -93,7 +93,10 @@ body{font-family:system-ui,sans-serif;background:#f5f5f5;min-height:100vh}
   <div class="powered">Powered by Google Gemini + Elasticsearch &nbsp;·&nbsp; <a href="https://github.com/thanprasad123/ticket-scam-hunter" target="_blank">GitHub</a></div>
 </div>
 <script>
-const API='https://ticket-scam-hunter.onrender.com';
+const API=window.TICKET_SCAM_HUNTER_API||window.location.origin;
+function escapeHtml(value){
+  return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
 async function scanUrl(){
   const url=document.getElementById('urlInput').value.trim();
   if(!url)return alert('Please enter a URL');
@@ -102,12 +105,16 @@ async function scanUrl(){
   try{
     const res=await fetch(`${API}/v1/scans`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
     const data=await res.json();
+    if(!res.ok){
+      alert(data.detail||`API request failed with ${res.status}`);
+      return;
+    }
     showResult(url,data);loadRecent();
   }catch(e){alert('Error: '+e.message);}
   document.getElementById('spinner').style.display='none';
 }
 function showResult(url,data){
-  const verdict=data.verdict||'UNKNOWN';const score=data.score||0;
+  const verdict=data.verdict||'UNKNOWN';const score=Math.max(0,Math.min(10,Number(data.score)||0));
   document.getElementById('result-url').textContent=url;
   const badge=document.getElementById('verdict-badge');
   const icons={SCAM:'🔴',SUSPICIOUS:'🟡',LEGITIMATE:'🟢'};
@@ -121,25 +128,28 @@ function showResult(url,data){
   fill.style.width=`${score*10}%`;
   fill.style.background=score>=7?'#E24B4A':score>=4?'#EF9F27':'#639922';
   const reasons=data.reasons||[];
-  document.getElementById('reasons-section').innerHTML=reasons.length?'<div class="section-title">Analysis</div>'+reasons.map(r=>`<div class="reason-item">${r}</div>`).join(''):'';
+  document.getElementById('reasons-section').innerHTML=reasons.length?'<div class="section-title">Analysis</div>'+reasons.map(r=>`<div class="reason-item">${escapeHtml(r)}</div>`).join(''):'';
   const flags=data.red_flags||[];
-  document.getElementById('flags-section').innerHTML=flags.length?'<div class="section-title">Red Flags</div>'+flags.map(f=>`<div class="flag-item">⚠️ ${f}</div>`).join(''):'';
+  document.getElementById('flags-section').innerHTML=flags.length?'<div class="section-title">Red Flags</div>'+flags.map(f=>`<div class="flag-item">⚠️ ${escapeHtml(f)}</div>`).join(''):'';
   const trust=data.trust_signals||[];
-  document.getElementById('trust-section').innerHTML=trust.length?'<div class="section-title">Trust Signals</div>'+trust.map(t=>`<div class="trust-item">✅ ${t}</div>`).join(''):'';
+  document.getElementById('trust-section').innerHTML=trust.length?'<div class="section-title">Trust Signals</div>'+trust.map(t=>`<div class="trust-item">✅ ${escapeHtml(t)}</div>`).join(''):'';
   document.getElementById('result-section').style.display='block';
 }
 async function loadRecent(){
   try{
     const res=await fetch(`${API}/v1/scans`);const data=await res.json();
+    if(!res.ok)throw new Error(data.detail||`API request failed with ${res.status}`);
     const list=document.getElementById('recent-list');
     const results=(data.results||[]).slice(0,5);
     if(!results.length){list.innerHTML='<p style="color:#999;font-size:13px">No scans yet.</p>';return;}
     list.innerHTML=results.map(r=>{
       const dot=r.verdict==='SCAM'?'dot-scam':r.verdict==='SUSPICIOUS'?'dot-sus':'dot-ok';
       const short=(r.url||'').substring(0,45)+((r.url||'').length>45?'...':'');
-      return `<div class="recent-row"><div class="dot ${dot}"></div><div class="recent-url">${short}</div><div class="recent-score">${r.score}/10 · ${r.verdict}</div></div>`;
+      return `<div class="recent-row"><div class="dot ${dot}"></div><div class="recent-url">${escapeHtml(short)}</div><div class="recent-score">${escapeHtml(r.score)}/10 · ${escapeHtml(r.verdict)}</div></div>`;
     }).join('');
-  }catch(e){}
+  }catch(e){
+    document.getElementById('recent-list').innerHTML='<p style="color:#999;font-size:13px">No scans yet.</p>';
+  }
 }
 document.getElementById('urlInput').addEventListener('keypress',e=>{if(e.key==='Enter')scanUrl();});
 loadRecent();

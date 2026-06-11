@@ -1,13 +1,15 @@
-from elasticsearch import Elasticsearch
-import os
+from store import get_es_client
 
-es = Elasticsearch(
-    "https://697bbb480339473190e87012c2d7d8f4.us-central1.gcp.cloud.es.io:443",
-    api_key=os.environ.get("ES_API_KEY")
-)
 
-try:
-    info = es.info()
-    print("Connected!", info)
-except Exception as e:
-    print(f"Error: {e}")
+def main() -> int:
+    try:
+        info = get_es_client().info()
+        print("Connected!", info)
+        return 0
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -2,8 +2,9 @@
 
 from datetime import datetime
 from enum import Enum
+from ipaddress import ip_address
 from typing import Annotated
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from pydantic import (
     AnyHttpUrl,
@@ -18,6 +19,31 @@ URGENCY_PATTERNS = ("dm asap", "zelle", "venmo", "wire only", "cash app only")
 # Fraud-signature patterns referenced in risk assessment prompts/logic
 MAX_URL_LEN = 2048
 MAX_QUERY_LEN = 500
+
+
+def is_disallowed_hostname(hostname: str | None) -> bool:
+    if not hostname:
+        return True
+
+    normalized = hostname.strip().strip("[]").lower()
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return True
+
+    try:
+        ip = ip_address(normalized)
+    except ValueError:
+        return False
+
+    return any(
+        (
+            ip.is_loopback,
+            ip.is_private,
+            ip.is_link_local,
+            ip.is_multicast,
+            ip.is_reserved,
+            ip.is_unspecified,
+        )
+    )
 
 
 class Verdict(str, Enum):
@@ -56,6 +82,14 @@ class ScanUrlRequest(BaseModel):
         if any(ord(c) < 32 for c in cleaned):
             raise ValueError("url contains invalid control characters")
         return cleaned
+
+    @field_validator("url")
+    @classmethod
+    def reject_private_url_targets(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        parsed = urlparse(str(value))
+        if is_disallowed_hostname(parsed.hostname):
+            raise ValueError("url host must be a public HTTP(S) host")
+        return value
 
 
 class PageMeta(BaseModel):

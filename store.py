@@ -8,10 +8,12 @@ from elasticsearch import Elasticsearch
 
 logger = logging.getLogger(__name__)
 
-ES_ENDPOINT = (
+DEFAULT_ES_ENDPOINT = (
     "https://697bbb480339473190e87012c2d7d8f4.us-central1.gcp.cloud.es.io:443"
 )
-INDEX = "scam-sites"
+DEFAULT_INDEX = "scam-sites"
+DEFAULT_REQUEST_TIMEOUT = 5.0
+DEFAULT_MAX_RETRIES = 0
 
 INDEX_MAPPINGS = {
     "properties": {
@@ -26,20 +28,63 @@ INDEX_MAPPINGS = {
 }
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s value; using %s", name, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s value; using %s", name, default)
+        return default
+
+
+def get_index_name() -> str:
+    return os.environ.get("ES_INDEX", DEFAULT_INDEX)
+
+
 def get_es_client() -> Elasticsearch:
     api_key = os.environ.get("ES_API_KEY")
     if not api_key:
         raise EnvironmentError("ES_API_KEY is not set")
-    return Elasticsearch(ES_ENDPOINT, api_key=api_key)
+    endpoint = os.environ.get("ES_ENDPOINT", DEFAULT_ES_ENDPOINT)
+    if not endpoint:
+        raise EnvironmentError("ES_ENDPOINT is not set")
+    return Elasticsearch(
+        endpoint,
+        api_key=api_key,
+        request_timeout=_env_float("ES_REQUEST_TIMEOUT", DEFAULT_REQUEST_TIMEOUT),
+        max_retries=_env_int("ES_MAX_RETRIES", DEFAULT_MAX_RETRIES),
+        retry_on_timeout=False,
+    )
 
 
-def create_index_if_not_exists(es: Elasticsearch | None = None) -> None:
+def create_index_if_not_exists(
+    es: Elasticsearch | None = None,
+    *,
+    raise_errors: bool = False,
+) -> bool:
     try:
         client = es or get_es_client()
-        if not client.indices.exists(index=INDEX):
-            client.indices.create(index=INDEX, mappings=INDEX_MAPPINGS)
+        index = get_index_name()
+        if not client.indices.exists(index=index):
+            client.indices.create(index=index, mappings=INDEX_MAPPINGS)
+        return True
+    except EnvironmentError:
+        if raise_errors:
+            raise
+        logger.warning("Elasticsearch is not configured")
+        return False
     except Exception as e:
+        if raise_errors:
+            raise EnvironmentError(f"Elasticsearch index setup failed: {e}") from e
         logger.warning("Elasticsearch index setup failed: %s", e)
+        return False
 
 
 def _text_field(value) -> str:
@@ -65,8 +110,9 @@ def store_result(result: dict, es: Elasticsearch | None = None) -> str | None:
     url = result.get("url", "unknown")
     try:
         client = es or get_es_client()
-        create_index_if_not_exists(client)
-        response = client.index(index=INDEX, document=_doc_from_result(result))
+        if not create_index_if_not_exists(client):
+            return None
+        response = client.index(index=get_index_name(), document=_doc_from_result(result))
         logger.info("Stored scan result for %s (doc_id=%s)", url, response["_id"])
         return response["_id"]
     except EnvironmentError as e:
@@ -85,10 +131,13 @@ def search_scams(
     verdict: str | None = None,
     query: str | None = None,
     es: Elasticsearch | None = None,
+    *,
+    raise_errors: bool = False,
 ) -> list:
     try:
         client = es or get_es_client()
-        create_index_if_not_exists(client)
+        if not create_index_if_not_exists(client, raise_errors=raise_errors):
+            return []
 
         must = []
         if verdict:
@@ -108,20 +157,33 @@ def search_scams(
         else:
             es_query = {"match_all": {}}
 
-        response = client.search(index=INDEX, query=es_query, size=10)
+        response = client.search(index=get_index_name(), query=es_query, size=10)
         return [hit["_source"] for hit in response["hits"]["hits"]]
+    except EnvironmentError:
+        if raise_errors:
+            raise
+        logger.warning("Elasticsearch is not configured")
+        return []
     except Exception as e:
+        if raise_errors:
+            raise EnvironmentError(f"Elasticsearch search failed: {e}") from e
         logger.warning("Elasticsearch search failed: %s", e)
         return []
 
 
-def get_by_url(url: str, es: Elasticsearch | None = None) -> dict | None:
+def get_by_url(
+    url: str,
+    es: Elasticsearch | None = None,
+    *,
+    raise_errors: bool = False,
+) -> dict | None:
     try:
         client = es or get_es_client()
-        create_index_if_not_exists(client)
+        if not create_index_if_not_exists(client, raise_errors=raise_errors):
+            return None
 
         response = client.search(
-            index=INDEX,
+            index=get_index_name(),
             query={"term": {"url": url}},
             size=1,
         )
@@ -131,6 +193,8 @@ def get_by_url(url: str, es: Elasticsearch | None = None) -> dict | None:
         logger.debug("Cache hit for %s", url)
         return hits[0]["_source"]
     except EnvironmentError as e:
+        if raise_errors:
+            raise
         logger.warning(
             "Elasticsearch unavailable, cache miss for %s: %s",
             url,
@@ -138,6 +202,8 @@ def get_by_url(url: str, es: Elasticsearch | None = None) -> dict | None:
         )
         return None
     except Exception as e:
+        if raise_errors:
+            raise EnvironmentError(f"Elasticsearch lookup failed: {e}") from e
         logger.warning("Elasticsearch lookup failed for %s: %s", url, e)
         return None
 

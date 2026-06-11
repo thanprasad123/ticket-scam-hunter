@@ -2,17 +2,28 @@
 """Day 1: Analyze a ticket-sales URL for FIFA World Cup 2026 scam signals via Gemini."""
 
 import argparse
+import os
 import json
 import re
 import sys
 from datetime import datetime, timezone
+from urllib.parse import urljoin, urlparse
 
 from google import genai
 import requests
 from bs4 import BeautifulSoup
 
-MODEL = "gemini-2.5-flash"
+from schemas import is_disallowed_hostname
+
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+VERTEX_PROJECT = (
+    os.environ.get("VERTEX_PROJECT_ID")
+    or os.environ.get("GOOGLE_CLOUD_PROJECT")
+    or "gen-lang-client-0799569470"
+)
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 MAX_PAGE_CHARS = 12_000
+MAX_REDIRECTS = 5
 USER_AGENT = (
     "Mozilla/5.0 (compatible; TicketScamHunter/1.0; +https://github.com/hackathon)"
 )
@@ -65,10 +76,36 @@ Be calibrated: SUSPICIOUS for mixed signals, SCAM only when evidence is strong, 
 Base your judgment only on the supplied content (you cannot browse live). If content is thin or blocked, lean SUSPICIOUS and say why."""
 
 
+def _validate_fetch_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise requests.RequestException("Only HTTP(S) URLs can be fetched")
+    if is_disallowed_hostname(parsed.hostname):
+        raise requests.RequestException("URL host must be a public HTTP(S) host")
+
+
 def fetch_page_text(url: str, timeout: int = 20) -> tuple[str, dict]:
     """Fetch URL and return plain text plus metadata for analysis."""
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
-    resp = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+    current_url = url
+    with requests.Session() as session:
+        for _ in range(MAX_REDIRECTS + 1):
+            _validate_fetch_url(current_url)
+            resp = session.get(
+                current_url,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=False,
+            )
+            if not resp.is_redirect:
+                break
+            location = resp.headers.get("Location")
+            if not location:
+                break
+            current_url = urljoin(resp.url, location)
+        else:
+            raise requests.RequestException(f"Too many redirects fetching {url}")
+
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -94,8 +131,8 @@ def fetch_page_text(url: str, timeout: int = 20) -> tuple[str, dict]:
 def analyze_with_gemini(url: str, page_text: str, meta: dict) -> dict:
     client = genai.Client(
         vertexai=True,
-        project="gen-lang-client-0799569470",
-        location="us-central1",
+        project=VERTEX_PROJECT,
+        location=VERTEX_LOCATION,
     )
 
     user_content = f"""URL submitted: {url}
@@ -114,16 +151,20 @@ Page title: {meta.get("title") or "(none)"}
             system_instruction=SYSTEM_PROMPT,
             temperature=0.2,
             response_mime_type="application/json",
+            response_schema=ANALYSIS_SCHEMA,
         ),
     )
 
-    raw = response.text.strip()
+    raw = (response.text or "").strip()
+    if not raw:
+        raise ValueError("Gemini returned an empty response")
     data = json.loads(raw)
 
     # Normalize field names
     if "verdict" not in data:
         # Try to find verdict under different keys
         data["verdict"] = data.get("verdict", "SUSPICIOUS")
+    data["verdict"] = str(data["verdict"]).upper()
 
     if "reasons" not in data or not data["reasons"]:
         reason = data.get("reason") or data.get("reasoning") or "See verdict"
@@ -135,6 +176,7 @@ Page title: {meta.get("title") or "(none)"}
     if "score" not in data:
         defaults = {"SCAM": 8, "SUSPICIOUS": 5, "LEGITIMATE": 1}
         data["score"] = defaults.get(data.get("verdict", "SUSPICIOUS"), 5)
+    data["score"] = max(0, min(10, float(data["score"])))
     data.setdefault("red_flags", [])
     data.setdefault("trust_signals", [])
     return data
