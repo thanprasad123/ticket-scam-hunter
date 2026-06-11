@@ -1,4 +1,3 @@
-# ticket-scam-hunter
 # Ticket Scam Hunter
 
 Ticket Scam Hunter is an AI-powered platform designed to identify potentially fraudulent ticket-selling websites, with a focus on FIFA World Cup 2026 ticket scams.
