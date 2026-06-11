@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ticket Scam Hunter</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f5f5f5;min-height:100vh}
+.topbar{background:#1a237e;padding:16px 24px;display:flex;align-items:center;gap:12px}
+.logo{width:32px;height:32px;background:rgba(255,255,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center}
+.logo i{color:white;font-size:18px}
+.logo-text{color:white;font-size:16px;font-weight:500}
+.logo-sub{color:#90caf9;font-size:12px}
+.main{padding:32px 24px;max-width:720px;margin:0 auto}
+.hero{text-align:center;margin-bottom:32px}
+.hero h1{font-size:22px;font-weight:500;color:#1a1a1a;margin-bottom:8px}
+.hero p{font-size:14px;color:#666;line-height:1.6}
+.card{background:white;border:1px solid #e0e0e0;border-radius:12px;padding:24px;margin-bottom:24px}
+.search-row{display:flex;gap:8px}
+.url-input{flex:1;border:1px solid #ddd;border-radius:8px;padding:10px 14px;font-size:14px;outline:none}
+.url-input:focus{border-color:#1a237e}
+.scan-btn{background:#1a237e;color:white;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px}
+.scan-btn:hover{background:#283593}
+.result-header{display:flex;align-items:center;gap:16px;padding-bottom:16px;border-bottom:1px solid #eee;margin-bottom:16px}
+.badge{padding:6px 14px;border-radius:20px;font-size:13px;font-weight:500}
+.badge-scam{background:#FCEBEB;color:#A32D2D}
+.badge-suspicious{background:#FAEEDA;color:#854F0B}
+.badge-legit{background:#EAF3DE;color:#3B6D11}
+.score-box{margin-left:auto;text-align:right}
+.score-num{font-size:22px;font-weight:500}
+.score-bar{width:80px;height:6px;background:#eee;border-radius:3px;margin-top:4px}
+.score-fill{height:100%;border-radius:3px}
+.section-title{font-size:11px;font-weight:500;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;margin-top:16px}
+.reason-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #f5f5f5;font-size:14px;color:#333;line-height:1.5}
+.reason-item i{color:#999;margin-top:2px;font-size:15px;flex-shrink:0}
+.flag-item{display:flex;gap:10px;align-items:center;padding:8px 12px;background:#FCEBEB;border-radius:8px;margin-bottom:6px;font-size:13px;color:#A32D2D}
+.trust-item{display:flex;gap:10px;align-items:center;padding:8px 12px;background:#EAF3DE;border-radius:8px;margin-bottom:6px;font-size:13px;color:#3B6D11}
+.recent-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f5f5f5}
+.recent-row:last-child{border-bottom:none}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-scam{background:#E24B4A}
+.dot-sus{background:#EF9F27}
+.dot-ok{background:#639922}
+.recent-url{font-size:13px;color:#333;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recent-score{font-size:12px;color:#999;white-space:nowrap}
+.spinner{display:none;text-align:center;padding:20px;color:#666}
+#result-section{display:none}
+.powered{text-align:center;padding:20px 0;font-size:12px;color:#999}
+.powered a{color:#1a237e}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo"><i class="ti ti-shield-check"></i></div>
+  <div>
+    <div class="logo-text">Ticket Scam Hunter</div>
+    <div class="logo-sub">FIFA World Cup 2026 fraud detection</div>
+  </div>
+</div>
+<div class="main">
+  <div class="hero">
+    <h1>Is this ticket site safe?</h1>
+    <p>Paste any ticket website URL below. Our AI agent analyzes it for fraud signals using Google Gemini and Elasticsearch.</p>
+  </div>
+  <div class="card">
+    <div class="search-row">
+      <input class="url-input" type="text" id="urlInput" placeholder="https://cheapworldcuptickets2026.com" />
+      <button class="scan-btn" onclick="scanUrl()">Scan for scams</button>
+    </div>
+  </div>
+  <div class="spinner" id="spinner">Analyzing with Gemini AI + Elasticsearch...</div>
+  <div id="result-section" class="card">
+    <div class="result-header">
+      <div>
+        <div style="font-size:13px;color:#999;margin-bottom:4px" id="result-url"></div>
+        <span class="badge" id="verdict-badge"></span>
+      </div>
+      <div class="score-box">
+        <div class="score-num" id="score-num"></div>
+        <div class="score-bar"><div class="score-fill" id="score-fill"></div></div>
+      </div>
+    </div>
+    <div id="reasons-section"></div>
+    <div id="flags-section"></div>
+    <div id="trust-section"></div>
+  </div>
+  <div class="card">
+    <div class="section-title">Recent Scans</div>
+    <div id="recent-list"></div>
+  </div>
+  <div class="powered">Powered by Google Gemini + Elasticsearch &nbsp;·&nbsp; <a href="https://github.com/thanprasad123/ticket-scam-hunter" target="_blank">GitHub</a></div>
+</div>
+<script>
+const API='https://ticket-scam-hunter.onrender.com';
+async function scanUrl(){
+  const url=document.getElementById('urlInput').value.trim();
+  if(!url)return alert('Please enter a URL');
+  document.getElementById('spinner').style.display='block';
+  document.getElementById('result-section').style.display='none';
+  try{
+    const res=await fetch(`${API}/v1/scans`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const data=await res.json();
+    showResult(url,data);loadRecent();
+  }catch(e){alert('Error: '+e.message);}
+  document.getElementById('spinner').style.display='none';
+}
+function showResult(url,data){
+  const verdict=data.verdict||'UNKNOWN';const score=data.score||0;
+  document.getElementById('result-url').textContent=url;
+  const badge=document.getElementById('verdict-badge');
+  const icons={SCAM:'🔴',SUSPICIOUS:'🟡',LEGITIMATE:'🟢'};
+  badge.textContent=(icons[verdict]||'')+' '+verdict;
+  badge.className='badge';
+  if(verdict==='SCAM')badge.classList.add('badge-scam');
+  else if(verdict==='SUSPICIOUS')badge.classList.add('badge-suspicious');
+  else badge.classList.add('badge-legit');
+  document.getElementById('score-num').textContent=`${score}/10`;
+  const fill=document.getElementById('score-fill');
+  fill.style.width=`${score*10}%`;
+  fill.style.background=score>=7?'#E24B4A':score>=4?'#EF9F27':'#639922';
+  const reasons=data.reasons||[];
+  document.getElementById('reasons-section').innerHTML=reasons.length?'<div class="section-title">Analysis</div>'+reasons.map(r=>`<div class="reason-item">${r}</div>`).join(''):'';
+  const flags=data.red_flags||[];
+  document.getElementById('flags-section').innerHTML=flags.length?'<div class="section-title">Red Flags</div>'+flags.map(f=>`<div class="flag-item">⚠️ ${f}</div>`).join(''):'';
+  const trust=data.trust_signals||[];
+  document.getElementById('trust-section').innerHTML=trust.length?'<div class="section-title">Trust Signals</div>'+trust.map(t=>`<div class="trust-item">✅ ${t}</div>`).join(''):'';
+  document.getElementById('result-section').style.display='block';
+}
+async function loadRecent(){
+  try{
+    const res=await fetch(`${API}/v1/scans`);const data=await res.json();
+    const list=document.getElementById('recent-list');
+    const results=(data.results||[]).slice(0,5);
+    if(!results.length){list.innerHTML='<p style="color:#999;font-size:13px">No scans yet.</p>';return;}
+    list.innerHTML=results.map(r=>{
+      const dot=r.verdict==='SCAM'?'dot-scam':r.verdict==='SUSPICIOUS'?'dot-sus':'dot-ok';
+      const short=(r.url||'').substring(0,45)+((r.url||'').length>45?'...':'');
+      return `<div class="recent-row"><div class="dot ${dot}"></div><div class="recent-url">${short}</div><div class="recent-score">${r.score}/10 · ${r.verdict}</div></div>`;
+    }).join('');
+  }catch(e){}
+}
+document.getElementById('urlInput').addEventListener('keypress',e=>{if(e.key==='Enter')scanUrl();});
+loadRecent();
+</script>
+</body>
+</html>
