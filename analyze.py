@@ -89,24 +89,52 @@ def fetch_page_text(url: str, timeout: int = 20) -> tuple[str, dict]:
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
     current_url = url
     with requests.Session() as session:
-        for _ in range(MAX_REDIRECTS + 1):
-            _validate_fetch_url(current_url)
-            resp = session.get(
-                current_url,
-                headers=headers,
-                timeout=timeout,
-                allow_redirects=False,
-            )
-            if not resp.is_redirect:
-                break
-            location = resp.headers.get("Location")
-            if not location:
-                break
-            current_url = urljoin(resp.url, location)
-        else:
-            raise requests.RequestException(f"Too many redirects fetching {url}")
+        try:
+            for _ in range(MAX_REDIRECTS + 1):
+                _validate_fetch_url(current_url)
+                resp = session.get(
+                    current_url,
+                    headers=headers,
+                    timeout=timeout,
+                    allow_redirects=False,
+                )
+                if not resp.is_redirect:
+                    break
+                location = resp.headers.get("Location")
+                if not location:
+                    break
+                current_url = urljoin(resp.url, location)
+            else:
+                raise requests.RequestException(f"Too many redirects fetching {url}")
+        except requests.exceptions.SSLError as exc:
+            raise requests.RequestException(
+                f"SSL certificate error fetching {url}: {exc}"
+            ) from exc
+        except requests.exceptions.Timeout as exc:
+            raise requests.RequestException(
+                f"Timeout fetching {url}: {exc}"
+            ) from exc
+        except requests.exceptions.ConnectionError as exc:
+            message = str(exc)
+            if "Name or service not known" in message or "Temporary failure in name resolution" in message:
+                raise requests.RequestException(
+                    f"DNS resolution failed for {url}: {message}"
+                ) from exc
+            raise requests.RequestException(
+                f"Connection error fetching {url}: {message}"
+            ) from exc
 
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        status = getattr(exc.response, "status_code", None)
+        if status == 403:
+            raise requests.RequestException(
+                f"HTTP 403 Forbidden fetching {url}"
+            ) from exc
+        raise requests.RequestException(
+            f"HTTP {status} error fetching {url}"
+        ) from exc
 
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "noscript"]):

@@ -8,7 +8,13 @@ from fastmcp import FastMCP
 from pydantic import ValidationError
 
 from scanner import scan_ticket_url as run_scan
-from schemas import ScanResultResponse, ScanUrlRequest, SearchScansRequest, Verdict
+from schemas import (
+    ScanPipelineError,
+    ScanResultResponse,
+    ScanUrlRequest,
+    SearchScansRequest,
+    Verdict,
+)
 from store import search_scams as search_stored_scams
 
 mcp = FastMCP(
@@ -39,6 +45,10 @@ def _stored_doc_to_scan_result(doc: dict) -> dict:
     )
 
 
+def _tool_error_response(detail: str, error_code: str) -> dict:
+    return {"error": {"detail": detail, "error_code": error_code}}
+
+
 @mcp.tool(name="scan_ticket_url")
 async def scan_ticket_url_tool(
     url: str,
@@ -51,8 +61,18 @@ async def scan_ticket_url_tool(
         persist=persist,
         force_refresh=force_refresh,
     )
-    result = await asyncio.wait_for(run_scan(request), timeout=120.0)
-    return _scan_result_to_dict(result)
+    try:
+        result = await asyncio.wait_for(run_scan(request), timeout=120.0)
+        return _scan_result_to_dict(result)
+    except ScanPipelineError as exc:
+        return _tool_error_response(str(exc), exc.error_code)
+    except ValidationError as exc:
+        return _tool_error_response(str(exc), "validation_error")
+    except Exception as exc:
+        return _tool_error_response(
+            f"Internal tool error scanning URL: {exc}",
+            "internal_error",
+        )
 
 
 @mcp.tool(name="search_scams")
@@ -62,18 +82,26 @@ async def search_scams_tool(
 ) -> dict:
     """Search previously detected scam sites in Elasticsearch."""
     params = SearchScansRequest(verdict=verdict, query=query)
-    docs = await asyncio.to_thread(
-        search_stored_scams,
-        verdict=params.verdict.value if params.verdict else None,
-        query=params.query,
-    )
-    results = []
-    for doc in docs:
-        try:
-            results.append(_stored_doc_to_scan_result(doc))
-        except (ValidationError, ValueError, KeyError):
-            continue
-    return {"total": len(results), "results": results}
+    try:
+        docs = await asyncio.to_thread(
+            search_stored_scams,
+            verdict=params.verdict.value if params.verdict else None,
+            query=params.query,
+        )
+        results = []
+        for doc in docs:
+            try:
+                results.append(_stored_doc_to_scan_result(doc))
+            except (ValidationError, ValueError, KeyError):
+                continue
+        return {"total": len(results), "results": results}
+    except EnvironmentError as exc:
+        return _tool_error_response(str(exc), "elasticsearch_unavailable")
+    except Exception as exc:
+        return _tool_error_response(
+            f"Internal tool error searching scams: {exc}",
+            "internal_error",
+        )
 
 
 mcp_app = mcp.http_app(path="/mcp", stateless_http=True, json_response=True)

@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 
 from pydantic import ValidationError
-from requests.exceptions import RequestException
+from requests.exceptions import ConnectionError, RequestException, SSLError, Timeout
 
 from analyze import analyze_with_gemini, fetch_page_text, format_result
 from schemas import (
@@ -55,9 +55,22 @@ def _fetch_page_with_retry(url: str) -> tuple[str, dict]:
                 exc,
             )
             if attempt < FETCH_MAX_ATTEMPTS - 1:
+                # Retry transient network failures with exponential backoff.
                 time.sleep(FETCH_BACKOFF_SEC * (2**attempt))
 
-    detail = str(last_error) if last_error is not None else "unknown network error"
+    if isinstance(last_error, Timeout):
+        detail = f"Timeout fetching {url}: {last_error}"
+    elif isinstance(last_error, SSLError):
+        detail = f"SSL certificate error fetching {url}: {last_error}"
+    elif isinstance(last_error, ConnectionError):
+        message = str(last_error)
+        if "Name or service not known" in message or "Temporary failure in name resolution" in message:
+            detail = f"DNS resolution failed for {url}: {message}"
+        else:
+            detail = f"Connection error fetching {url}: {message}"
+    else:
+        detail = str(last_error) if last_error is not None else "unknown network error"
+
     raise UrlFetchError(
         f"Failed to fetch URL after {FETCH_MAX_ATTEMPTS} attempts: {detail}",
         cause=last_error,
